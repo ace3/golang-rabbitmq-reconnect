@@ -2,17 +2,31 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"time"
 
+	"github.com/ace3/golang-rabbitmq-reconnect/lib/rabbitmq"
 	"github.com/joho/godotenv"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func main() {
 	godotenv.Load(".env")
-	connectToRabbitMQ()
+	fmt.Println("RabbitMQ in Golang: Getting started tutorial")
+	consumerFunc := func(body []byte) error {
+		log.Printf("Received Message: %s\n", body)
+		return nil
+	}
+
+	consumer := rabbitmq.NewConsumer("testing", consumerFunc)
+	consumer.ConnectAndConsume(os.Getenv("AMQP_DSN"))
+
+	select {} // Keep the application running
+
+	// connectToRabbitMQ()
 }
+
 func connectToRabbitMQ() {
 	connection, err := amqp.Dial(os.Getenv("AMQP_DSN"))
 	if err != nil {

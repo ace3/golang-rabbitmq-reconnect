@@ -4,16 +4,19 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/joho/godotenv"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func main() {
-	godotenv.Load(".env")
+	if err := godotenv.Load(".env"); err != nil {
+		panic("Error loading .env file")
+	}
 	fmt.Println("RabbitMQ in Golang: Getting started tutorial")
 
-	connection, err := amqp.Dial(os.Getenv("AMQP_DSN"))
+	connection, err := connectToRabbitMQ(os.Getenv("AMQP_DSN"))
 	if err != nil {
 		panic(err)
 	}
@@ -21,14 +24,12 @@ func main() {
 
 	fmt.Println("Successfully connected to RabbitMQ instance")
 
-	// opening a channel over the connection established to interact with RabbitMQ
 	channel, err := connection.Channel()
 	if err != nil {
 		panic(err)
 	}
 	defer channel.Close()
 
-	// declaring queue with its properties over the the channel opened
 	queue, err := channel.QueueDeclare(
 		"testing", // name
 		true,      // durable
@@ -41,23 +42,49 @@ func main() {
 		panic(err)
 	}
 
-	// publishing a message
-	err = channel.PublishWithContext(
-		context.Background(),
-		"",        // exchange
-		"testing", // key
-		false,     // mandatory
-		false,     // immediate
-		amqp.Publishing{
-			ContentType: "text/plain",
-			Body:        []byte("Test Message"),
-		},
-	)
+	// Retry sending the message
+	err = retryPublish(channel, "testing", []byte("Test Message"), 5)
 	if err != nil {
 		panic(err)
 	}
 
 	fmt.Println("Queue status:", queue)
 	fmt.Println("Successfully published message")
+}
 
+func connectToRabbitMQ(amqpDSN string) (*amqp.Connection, error) {
+	maxRetries := 5
+	for i := 0; i < maxRetries; i++ {
+		conn, err := amqp.Dial(amqpDSN)
+		if err != nil {
+			fmt.Printf("Failed to connect to RabbitMQ, retrying... (%d/%d)\n", i+1, maxRetries)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		return conn, nil
+	}
+	return nil, fmt.Errorf("failed to connect to RabbitMQ after %d attempts", maxRetries)
+}
+
+func retryPublish(channel *amqp.Channel, queueName string, body []byte, maxRetries int) error {
+	for i := 0; i < maxRetries; i++ {
+		err := channel.PublishWithContext(
+			context.Background(),
+			"",        // exchange
+			queueName, // key
+			false,     // mandatory
+			false,     // immediate
+			amqp.Publishing{
+				ContentType: "text/plain",
+				Body:        body,
+			},
+		)
+		if err != nil {
+			fmt.Printf("Failed to publish message, retrying... (%d/%d)\n", i+1, maxRetries)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("failed to publish message after %d attempts", maxRetries)
 }
